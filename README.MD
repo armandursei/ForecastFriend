@@ -25,10 +25,6 @@ It should have a pleasing UI/UX, that blends in an photo from the city with the 
 - There is a `<div id="root">` tag without children when the page loads in
 - All the contents are placed and removed by javascript
 
-## Hints
-
-- **For students that want to play around with frameworks, this project can also be implemented using a frontend framework like React, Vue, Svelte, htmx, etc. JQuery is not an acceptable option**
-
 ## Background materials
 - <i class="far fa-exclamation"></i> [JavaScript First steps](https://developer.mozilla.org/en-US/docs/Learn/JavaScript/First_steps)
 - <i class="far fa-exclamation"></i> [JavaScript Fetch API](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch)
