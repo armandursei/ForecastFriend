@@ -4,10 +4,9 @@
 Visit it: https://armandursei.github.io/ForecastFriend/
 
 ## ForecastFriend |JavaScript, HTML, CSS, JSON, HTTP
-◦ Developed an application that was focused on the client’s interaction with several servers, by entering a
-location helped by autocomplete and displaying weather data and images from the location
-◦ Used HTTP GET requests to access weather, location, and image APIs to extract data in JSON format,
-displayed in a user-friendly interface
+◦ Developed an application that was focused on the client’s interaction with several servers, by entering a location helped by autocomplete and displaying weather data and images from the location
+
+◦ Used HTTP GET requests to access weather, location, and image APIs to extract data in JSON format, displayed in a user-friendly interface
 
 ## Story
 
