@@ -1,30 +1,43 @@
-// // Register a listener for the DOMContentLoaded event. This is triggered when the HTML is loaded and the DOM is constructed.
-// // We are doing this because the script is loaded in the head of the document, so the DOM is not yet constructed when the script is executed.
-// document.addEventListener("DOMContentLoaded", (_event) => {
-//     alert("After DOM has loaded");
-//     // todo: Add code here that updates the HTML, registers event listeners, calls HTTP endpoints, etc.
-// });
+/**
+ * ForecastFriend - client-side weather viewer.
+ *
+ * Builds the whole UI inside <div id="root">, suggests cities while the user types
+ * (Geoapify), shows current conditions and a 5-day forecast (WeatherAPI.com),
+ * uses a photo of the selected city as the page background (Pexels) and keeps
+ * an in-memory list of favorite cities.
+ *
+ * API keys are read from window.APP_CONFIG, defined in scripts/config.js
+ * (see scripts/config.example.js).
+ */
 
-
+// The script is loaded in <head>, so wait until the DOM is ready.
 document.addEventListener("DOMContentLoaded", (_event) => {
-    const apiKey = 'REMOVED_GEOAPIFY_API_KEY'; 
-    const weatherApiKey = 'REMOVED_WEATHER_API_KEY'; 
+    const DEFAULT_BACKGROUND = "linear-gradient(to bottom,#FBFBFB,#FFFFF4)";
+    const REQUIRED_CONFIG_KEYS = ["GEOAPIFY_API_KEY", "WEATHER_API_KEY", "PEXELS_API_KEY"];
 
+    const root = document.getElementById('root');
+    root.classList.add("card");
+    document.body.style.backgroundImage = DEFAULT_BACKGROUND;
+
+    const config = window.APP_CONFIG || {};
+    const missingKeys = REQUIRED_CONFIG_KEYS.filter(key => !isConfigured(config[key]));
+    if (missingKeys.length > 0) {
+        showConfigError(missingKeys);
+        return;
+    }
+
+    const geoapifyApiKey = config.GEOAPIFY_API_KEY;
+    const weatherApiKey = config.WEATHER_API_KEY;
+    const pexelsApiKey = config.PEXELS_API_KEY;
+
+    // Favorites live only for the current page session: { name, lat, lon }.
     let favoriteCities = [];
 
-    const bg = document.createElement('p');
-     bg.setAttribute('id','bg');
-     document.body.style.backgroundImage="linear-gradient(to bottom,#FBFBFB,#FFFFF4)";
-
-
-    const car = document.getElementById('root');
-    car.classList.add("card");
-
-    car.innerHTML = `
+    root.innerHTML = `
       <div id="actual">
-      <img src="assets/images/online-weather-forecast-icon.jpeg" alt="weather-icon-title"></img>
+        <img src="assets/images/online-weather-forecast-icon.jpeg" alt="weather-icon-title" />
         <h3>Find weather in:</h3>
-        </div>
+      </div>
       <div class="search-container">
         <input
           type="text"
@@ -34,39 +47,48 @@ document.addEventListener("DOMContentLoaded", (_event) => {
         />
         <button id="clear-button">Clear</button>
       </div>
-      <div id="favorites-list" id="autocomplete-list"></div>
+      <div id="favorites-list"></div>
       <div id="autocomplete-list"></div>
-      <div id="weather-card">
-      </div>
-
+      <div id="weather-card"></div>
       <div id="spinner" style="display:none;"></div>
-
     `;
 
     const inputField = document.getElementById('city-input');
     const autocompleteList = document.getElementById('autocomplete-list');
     const weatherCard = document.getElementById('weather-card');
-    const forecastContainer = document.getElementById('forecast-container');
+    const spinner = document.getElementById('spinner');
 
-
-    const clearButton = document.getElementById('clear-button');
-    clearButton.addEventListener('click', clearInput);
-
+    document.getElementById('clear-button').addEventListener('click', clearInput);
     inputField.addEventListener('input', debounce(handleInput, 40));
+    inputField.addEventListener('focus', () => {
+        if (inputField.value === '') {
+            renderFavoriteCities();
+        }
+    });
 
-   const spinner = document.getElementById("spinner");
+    /** Returns true when a config value is set and is not the example placeholder. */
+    function isConfigured(value) {
+        return typeof value === "string" && value.trim() !== "" && !value.startsWith("your-");
+    }
 
+    /** Replaces the app with a setup message when API keys are missing. */
+    function showConfigError(keys) {
+        const message = `Missing API configuration: ${keys.join(", ")}. ` +
+            "Copy scripts/config.example.js to scripts/config.js and add your API keys.";
+        console.error(message);
 
+        const notice = document.createElement('p');
+        notice.textContent = message;
+        root.replaceChildren(notice);
+    }
 
-
+    /** City autocomplete suggestions from Geoapify. */
     async function fetchCityData(query) {
-        const url = `https://api.geoapify.com/v1/geocode/autocomplete?text=${encodeURIComponent(query)}&apiKey=${apiKey}&type=city`;
-        console.log('city url data:', url);
+        const url = `https://api.geoapify.com/v1/geocode/autocomplete?text=${encodeURIComponent(query)}&apiKey=${geoapifyApiKey}&type=city`;
 
         try {
             const response = await fetch(url);
             const data = await response.json();
-            console.log('city data:', data.features);
             return data.features;
         } catch (error) {
             console.error('Error fetching city data:', error);
@@ -74,202 +96,166 @@ document.addEventListener("DOMContentLoaded", (_event) => {
         }
     }
 
+    /** Current weather conditions from WeatherAPI.com. */
     async function fetchWeatherData(lat, lon) {
         const url = `https://api.weatherapi.com/v1/current.json?key=${weatherApiKey}&q=${lat},${lon}`;
 
-        console.log('WeatherAPI URL:', url);
-
         try {
-            
             const response = await fetch(url);
-            const data = await response.json();
-            console.log("weather data",data);
-            return data;
+            return await response.json();
         } catch (error) {
             console.error('Error fetching weather data:', error);
             return null;
         }
     }
 
+    /** Today plus the next 5 days from WeatherAPI.com. */
     async function fetchForecastData(lat, lon) {
         const url = `https://api.weatherapi.com/v1/forecast.json?key=${weatherApiKey}&q=${lat},${lon}&days=6`;
+
         try {
             const response = await fetch(url);
-            const data = await response.json();
-            console.log("forecast data", data);
-            return data;
+            return await response.json();
         } catch (error) {
             console.error('Error fetching forecast data:', error);
             return null;
         }
     }
 
+    /** URL of the first Pexels photo matching the city name, or null. */
     async function fetchCityImage(cityName) {
         const apiUrl = `https://api.pexels.com/v1/search?query=${cityName}`;
-        
-        const pexelsApiKey = 'REMOVED_PEXELS_API_KEY';
-
 
         try {
             const response = await fetch(apiUrl, {
-
-
                 headers: {
-                    'Authorization':  pexelsApiKey,
+                    'Authorization': pexelsApiKey,
                 },
             });
-    
             const data = await response.json();
-            const imageUrl = data.photos.length > 0 ? data.photos[0].src.large : null;
-            console.log(imageUrl);
-            return imageUrl;
+            return data.photos.length > 0 ? data.photos[0].src.large : null;
         } catch (error) {
-            document.body.style.backgroundImage="linear-gradient(to bottom,#FBFBFB,#FFFFF4)";
+            document.body.style.backgroundImage = DEFAULT_BACKGROUND;
             console.error('Error fetching city image:', error);
             return null;
         }
     }
 
-    const Spinner = document.getElementById('spinner');
+    /** Fetches weather, forecast and background photo for a city, then renders them. */
+    async function loadCity(cityName, lat, lon) {
+        showLoadingSpinner();
+        const weatherData = await fetchWeatherData(lat, lon);
+        const forecastData = await fetchForecastData(lat, lon);
+        const backgroundImageUrl = await fetchCityImage(cityName);
+        document.body.style.backgroundImage = backgroundImageUrl
+            ? `url(${backgroundImageUrl})`
+            : DEFAULT_BACKGROUND;
+        hideLoadingSpinner();
 
+        updateWeatherCard(weatherData, forecastData, cityName, lat, lon);
+    }
 
     function displayAutocomplete(data) {
-
-
         autocompleteList.innerHTML = '';
         const ul = document.createElement('ul');
+
         data.forEach(city => {
-            if(city.properties.city || city.properties.locality){
-            const listItem = document.createElement('li');
-            const cityName = city.properties.city || city.properties.locality  ;
+            const cityName = city.properties.city || city.properties.locality;
+            if (!cityName) {
+                return;
+            }
+
             const county = city.properties.county || '';
             const country = city.properties.country || '';
-            const displayText = `${cityName ? cityName + ', ' : ''}${county ? county + ', ' : ''}${country}`;
+            const displayText = `${cityName}, ${county ? county + ', ' : ''}${country}`;
 
+            const listItem = document.createElement('li');
             listItem.textContent = displayText;
-            
-            listItem.addEventListener('click', async () => {
-
+            listItem.addEventListener('click', () => {
                 inputField.value = displayText;
                 clearAutocomplete();
 
-
-               const { coordinates } = city.geometry;
-                const [lon, lat] = coordinates;
-                showLoadingSpinner(); // Show loading spinner when fetching data
-               const weatherData = await fetchWeatherData(lat, lon);
-               const forecastData= await fetchForecastData(lat,lon);
-               const backgroundImageUrl = await fetchCityImage(cityName);
-               if (backgroundImageUrl) {
-                document.body.style.backgroundImage = `url(${backgroundImageUrl})`;
-                }
-                else{
-                    document.body.style.backgroundImage="linear-gradient(to bottom,#FBFBFB,#FFFFF4)";
-
-                }
-               hideLoadingSpinner(); // Hide loading spinner after fetching data
-               
-               updateWeatherCard(weatherData, forecastData, cityName, lat, lon);
+                // GeoJSON coordinates are [longitude, latitude].
+                const [lon, lat] = city.geometry.coordinates;
+                loadCity(cityName, lat, lon);
             });
 
-
-
-            ul.appendChild(listItem);}
+            ul.appendChild(listItem);
         });
-        autocompleteList.appendChild(ul);
 
-    
+        autocompleteList.appendChild(ul);
     }
 
     function showLoadingSpinner() {
-       spinner.style.display = 'block';
-       console.log("apare spinner");
+        spinner.style.display = 'block';
     }
 
     function hideLoadingSpinner() {
         spinner.style.display = 'none';
-        console.log("nu mai apare spinner");
-
     }
 
     function clearAutocomplete() {
         autocompleteList.innerHTML = '';
     }
 
-    function updateWeatherCard(weatherData, forecastData, cityName, lat, lon) {
+    function findFavoriteIndex(cityName, lat, lon) {
+        return favoriteCities.findIndex(city => city.name == cityName && city.lat == lat && city.lon == lon);
+    }
 
-        console.log("weather data",weatherData);
+    function setHeartFilled(heart, filled) {
+        heart.classList.toggle("fa-solid", filled);
+        heart.classList.toggle("favorite", filled);
+        heart.classList.toggle("fa-regular", !filled);
+    }
+
+    /** Renders the current conditions card with a favorite toggle and a forecast button. */
+    function updateWeatherCard(weatherData, forecastData, cityName, lat, lon) {
         if (!weatherData) {
             console.error('Invalid or missing weather data:', weatherData);
             alert('Error fetching weather data.');
             return;
         }
-    
+
         const temperature = weatherData.current.temp_c;
         const skyConditions = weatherData.current.condition.text || '';
         const icon = `https:${weatherData.current.condition.icon}`;
         const humidity = weatherData.current.humidity || '';
-        const feelTemp=weatherData.current.feelslike_c;
-    
+        const feelsLikeTemp = weatherData.current.feelslike_c;
+
         weatherCard.innerHTML = `
             <div id="actual">
-            <h2>${cityName} <i id="favorite-button" class="fa-regular fa-heart fa-xs" style="margin-left: 6px"></i></h2>
+                <h2>${cityName} <i id="favorite-button" class="fa-regular fa-heart fa-xs" style="margin-left: 6px"></i></h2>
             </div>
 
             <div id="actual">
-            <img id="imag" src="${icon}" alt="Weather Condition Icon">
-            <p>${temperature}°C</p>
+                <img id="imag" src="${icon}" alt="Weather Condition Icon">
+                <p>${temperature}°C</p>
             </div>
 
-            
-            <p id="details">Real feel: ${feelTemp} °C</p>
+            <p id="details">Real feel: ${feelsLikeTemp} °C</p>
             <p id="details">Sky Conditions: ${skyConditions}</p>
             <p id="details">Humidity: ${humidity}%</p>
-            
+
             <button id="forecast-button">Forecast for the next 5 days</button>
         `;
         clearAutocomplete();
-        const forecastButton = document.getElementById('forecast-button');
-        forecastButton.addEventListener('click',  () => {updateForecast(forecastData);});
-        clearAutocomplete();
 
-        for (let i = 0; i < favoriteCities.length; i++) {
-            if (favoriteCities[i].name == cityName && favoriteCities[i].lat && favoriteCities[i].lon == lon) {
-                const heart = document.getElementById("favorite-button");
+        document.getElementById('forecast-button').addEventListener('click', () => {
+            updateForecast(forecastData);
+        });
 
-                heart.classList.add("fa-solid");
-                heart.classList.add("favorite");
-                heart.classList.remove("fa-regular");
+        const heart = document.getElementById("favorite-button");
+        setHeartFilled(heart, findFavoriteIndex(cityName, lat, lon) !== -1);
 
-                break;
+        heart.addEventListener("click", () => {
+            const index = findFavoriteIndex(cityName, lat, lon);
+            if (index !== -1) {
+                favoriteCities.splice(index, 1);
+                setHeartFilled(heart, false);
+            } else {
+                favoriteCities.push({ name: cityName, lat: lat, lon: lon });
+                setHeartFilled(heart, true);
             }
-        }
-
-        document.getElementById("favorite-button").addEventListener("click", function() {
-            let found = false;
-            const heart = document.getElementById("favorite-button");
-
-            for (let i = 0; i < favoriteCities.length; i++) {
-                if (favoriteCities[i].name == cityName && favoriteCities[i].lat && favoriteCities[i].lon == lon) {
-                    found = true;
-                    favoriteCities.splice(i, 1);
-                    heart.classList.remove("fa-solid");
-                    heart.classList.remove("favorite");
-                    heart.classList.add("fa-regular");
-
-                    break;
-                }
-            }
-
-            if (!found) {
-                heart.classList.add("fa-solid");
-                heart.classList.add("favorite");
-                heart.classList.remove("fa-regular");
-
-                favoriteCities.push({"name": cityName, "lat": lat, "lon": lon});
-            }
-
-            console.log(favoriteCities);
         });
     }
 
@@ -280,16 +266,14 @@ document.addEventListener("DOMContentLoaded", (_event) => {
         if (inputValue.length >= 3) {
             const data = await fetchCityData(inputValue);
             displayAutocomplete(data);
-        } 
-        else if(favoriteCities && inputField.value === ''){
+        } else if (inputValue === '') {
             renderFavoriteCities();
-        }
-        else{
+        } else {
             clearAutocomplete();
         }
     }
 
-    // Debounce function to limit the frequency of API requests
+    /** Delays calls to `func` until `delay` ms have passed without a new call. */
     function debounce(func, delay) {
         let timeout;
         return function () {
@@ -306,11 +290,9 @@ document.addEventListener("DOMContentLoaded", (_event) => {
         inputField.value = '';
         clearAutocomplete();
         weatherCard.innerHTML = '';
-       // forecastContainer.innerHTML = ''; 
-
     }
 
-    
+    /** Toggles the 5-day forecast below the weather card. */
     function updateForecast(forecastData) {
         clearAutocomplete();
         if (!forecastData) {
@@ -318,20 +300,19 @@ document.addEventListener("DOMContentLoaded", (_event) => {
             alert('Error fetching forecast data.');
             return;
         }
-        const existingForecastContainer = document.getElementById('forecast-container');
 
+        const existingForecastContainer = document.getElementById('forecast-container');
         if (existingForecastContainer) {
             existingForecastContainer.remove();
-            return; 
+            return;
         }
 
         const forecastContainer = document.createElement("div");
         forecastContainer.classList.add("forecast-container");
         forecastContainer.setAttribute("id", "forecast-container");
         weatherCard.appendChild(forecastContainer);
-        
-        forecastContainer.innerHTML = '';
 
+        // Index 0 is today, so start from tomorrow.
         for (let i = 1; i < forecastData.forecast.forecastday.length; i++) {
             const day = forecastData.forecast.forecastday[i];
 
@@ -342,7 +323,6 @@ document.addEventListener("DOMContentLoaded", (_event) => {
 
             const forecastCard = document.createElement('div');
             forecastCard.classList.add('forecast-card');
-
             forecastCard.innerHTML = `
             <div id="element">
                 <p id="date_resize">${date}</p>
@@ -354,58 +334,27 @@ document.addEventListener("DOMContentLoaded", (_event) => {
 
             forecastContainer.appendChild(forecastCard);
         }
-        clearAutocomplete();
     }
 
-
-    inputField.addEventListener('focus', () => {
-        if (inputField.value === '') {
-            renderFavoriteCities();
-        }
-    });
-
-    if (inputField.value === '' && favoriteCities.length===0) {
-        autocompleteList.innerHTML = '';
-
-    }
-
+    /** Shows the saved favorites in the suggestions list. */
     function renderFavoriteCities() {
-        console.log(favoriteCities);
-
         autocompleteList.innerHTML = '';
-        if(favoriteCities.length>0){
-            console.log(favoriteCities);
-        const fav = document.createElement('h1');
-        fav.setAttribute('id','your_fav');
-        fav.textContent='Your favorites:';
-        autocompleteList.appendChild(fav);
-    }
+
+        if (favoriteCities.length > 0) {
+            const heading = document.createElement('h1');
+            heading.setAttribute('id', 'your_fav');
+            heading.textContent = 'Your favorites:';
+            autocompleteList.appendChild(heading);
+        }
 
         const ul = document.createElement('ul');
 
         favoriteCities.forEach(city => {
             const listItem = document.createElement("li");
             listItem.textContent = city.name;
-
-            listItem.addEventListener('click', async () => {
+            listItem.addEventListener('click', () => {
                 inputField.value = city.name;
-                //inputField.value = '';
-                //clearAutocomplete();
-                showLoadingSpinner(); // Show loading spinner when fetching data
-
-                const weatherData = await fetchWeatherData(city.lat, city.lon);
-                const forecastData= await fetchForecastData(city.lat,city.lon);
-                const backgroundImageUrl = await fetchCityImage(city.name);
-                if (backgroundImageUrl) {
-                 document.body.style.backgroundImage = `url(${backgroundImageUrl})`;
-                 }
-                 else{
-                     document.body.style.backgroundImage="linear-gradient(to bottom,#FBFBFB,#FFFFF4)";
- 
-                 }
-                hideLoadingSpinner(); // Hide loading spinner after fetching data
-                
-                updateWeatherCard(weatherData, forecastData, city.name, city.lat, city.lon);
+                loadCity(city.name, city.lat, city.lon);
             });
 
             ul.appendChild(listItem);
@@ -413,5 +362,4 @@ document.addEventListener("DOMContentLoaded", (_event) => {
 
         autocompleteList.appendChild(ul);
     }
-
 });

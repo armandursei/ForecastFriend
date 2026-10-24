@@ -1,0 +1,12 @@
+# Local API keys (see scripts/config.example.js)
+scripts/config.js
+
+# Pages build output
+_site/
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp

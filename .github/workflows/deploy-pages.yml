@@ -1,0 +1,57 @@
+name: Deploy to GitHub Pages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Write scripts/config.js from repository secrets
+        env:
+          GEOAPIFY_API_KEY: ${{ secrets.GEOAPIFY_API_KEY }}
+          WEATHER_API_KEY: ${{ secrets.WEATHER_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+        run: |
+          for name in GEOAPIFY_API_KEY WEATHER_API_KEY PEXELS_API_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::warning::Repository secret $name is not set; the site will show a configuration message."
+            fi
+          done
+          node -e '
+            const keys = ["GEOAPIFY_API_KEY", "WEATHER_API_KEY", "PEXELS_API_KEY"];
+            const config = Object.fromEntries(keys.map((key) => [key, process.env[key] || ""]));
+            require("fs").writeFileSync("scripts/config.js", "window.APP_CONFIG = " + JSON.stringify(config, null, 4) + ";\n");
+          '
+
+      - name: Assemble site
+        run: |
+          mkdir _site
+          cp -R index.html assets scripts styles _site/
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
